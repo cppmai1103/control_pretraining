@@ -1,0 +1,9 @@
+# Install torch first from the CUDA 12.4 index:
+#   pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124
+# Exact tested versions of everything are in environment-lock.txt.
+transformers==5.23.0
+tokenizers==0.23.3
+datasets==5.2.0
+huggingface_hub==2.4.0
+numpy==2.4.6
+PyYAML==6.0.3

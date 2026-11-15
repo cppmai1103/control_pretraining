@@ -1,0 +1,91 @@
+# Model, optimizer, batching, evaluation, and Gate 4/5 settings (plan Sections 8-13).
+# Works unchanged on 1 or 2 GPUs: gradient accumulation is derived from
+# global_batch / (micro_batch * number_of_GPUs), so the effective batch stays 128.
+
+run_name: gpt2_5lang_500M
+data_dir: data/packed
+tokenizer_dir: data/tokenizer
+out_dir: results/gpt2_5lang_500M
+
+languages: [en, vi, id, ja, zh]
+seed: 1234        # model init, dropout, data loader
+data_seed: 42     # training block order
+
+model:
+  n_positions: 1024
+  n_embd: 768
+  n_layer: 12
+  n_head: 12
+  n_inner: 3072
+  activation_function: gelu_new
+  resid_pdrop: 0.1   # GPT-2 default
+  embd_pdrop: 0.1
+  attn_pdrop: 0.1
+  attn_implementation: sdpa
+
+train:
+  block_size: 1024
+  blocks_per_language: 97656   # 5 x 97,656 = 488,280 blocks = 499,998,720 tokens
+  global_batch: 128            # sequences per optimizer step (last step: 88)
+  micro_batch: 8               # per GPU; use 4 if memory is short
+  peak_lr: 3.0e-4
+  min_lr_ratio: 0.1            # ends at 3e-5
+  warmup_steps: 77
+  betas: [0.9, 0.95]
+  eps: 1.0e-8
+  weight_decay: 0.1            # biases/LayerNorm excluded; embeddings decayed
+  grad_clip: 1.0
+  precision: bf16
+  gradient_checkpointing: false
+  compile: false
+
+eval:
+  quick_interval: 250
+  quick_blocks: 100
+  full_interval: 1000
+  full_blocks: 1024
+  micro_batch: 16
+  generation_steps: [0, 1000, 2000, 3000]   # plus the final step
+  generation_max_new_tokens: 64
+  generation_temperature: 0.8
+  generation_top_k: 50
+  prompts:
+    en: "The history of the city began"
+    vi: "Lịch sử của thành phố bắt đầu"
+    id: "Sejarah kota ini dimulai"
+    ja: "この町の歴史は"
+    zh: "这座城市的历史始于"
+
+checkpoint:
+  # Full resumable checkpoints (model + optimizer + RNG + data position, ~1.6GB each)
+  interval: 500                # save every N steps (and at the final step)
+  keep_last: 2                 # rolling copies for crash recovery
+  milestone_interval: 1000     # kept permanently, along with the final checkpoint
+  # Weights-only analysis snapshots (Hugging Face format, ~0.54GB each), never deleted:
+  # steps 0, 16, 32, 64, 128, 500, 1000, ..., 3500, and the final step 3815 (13 in total)
+  snapshot_steps: [0, 16, 32, 64, 128]
+  snapshot_interval: 500
+
+logging:
+  interval: 10
+
+gates:
+  # Gate 4 (launch)
+  init_loss_tolerance: 0.3     # |initial loss - ln(vocab)|
+  overfit_blocks: 4
+  overfit_max_steps: 300
+  overfit_target_loss: 0.5
+  resume_tolerance: 1.0e-3
+  # Gate 5 (training health)
+  loss_ema_alpha: 0.05
+  loss_spike_ratio: 1.10       # smoothed loss above recent minimum by >10%
+  loss_spike_warn_steps: 50
+  loss_spike_stop_steps: 200   # stop if the spike has not recovered by then
+  grad_spike_ratio: 10.0       # pre-clip norm vs running median
+  grad_clip_warn_fraction: 0.5 # warn if clipped on >50% of the last 100 steps
+  val_no_improve_evals: 2
+  val_train_gap: 0.3           # nats; validation (token-weighted) minus recent train loss
+  lang_share_tolerance: 0.01   # absolute, around 0.20
+  lang_share_check_after: 250
+  throughput_drop: 0.20
+  repetition_min_distinct_4grams: 0.3

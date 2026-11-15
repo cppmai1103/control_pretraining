@@ -1,0 +1,90 @@
+# Data, tokenizer, and packing configuration (plan Sections 2-7 and 13).
+# Every data stage uses seed 42 with its own private random generator.
+
+data_root: data          # all data outputs go under here (gitignored)
+seed: 42
+
+languages:
+  en:
+    dataset: HuggingFaceFW/fineweb
+    config: sample-10BT
+    revision: main       # resolved to a commit hash at collection time and recorded
+    target_bytes: 1.0e9
+  vi:
+    dataset: HuggingFaceFW/fineweb-2
+    config: vie_Latn
+    revision: main
+    target_bytes: 1.0e9
+  id:
+    dataset: HuggingFaceFW/fineweb-2
+    config: ind_Latn
+    revision: main
+    target_bytes: 1.0e9
+  ja:
+    dataset: HuggingFaceFW/fineweb-2
+    config: jpn_Jpan
+    revision: main
+    target_bytes: 2.0e9
+  zh:
+    dataset: HuggingFaceFW/fineweb-2
+    config: cmn_Hani
+    revision: main
+    target_bytes: 2.0e9
+
+collection:
+  shuffle_buffer: 10000  # streaming shuffle buffer (documents), split across the chosen files
+  files_per_language: 16 # source parquet files sampled (seed 42) and interleaved per language
+
+# Conservative, language-agnostic cleaning (plan Section 4). Thresholds are
+# starting values: inspect data/reports/inspect/* and adjust before final use.
+cleaning:
+  min_chars: 50                      # Unicode characters, not words (safe for ja/zh)
+  max_duplicate_line_fraction: 0.30  # share of non-empty lines that repeat another line
+  max_char_run_fraction: 0.10        # share of characters inside runs of >= 10 identical characters
+  max_url_char_fraction: 0.20        # share of characters inside URLs
+  max_replacement_char_fraction: 0.001  # U+FFFD, a sign of broken decoding
+  min_language_score: null           # source language-ID score threshold; null = record only
+  inspect_kept: 100                  # documents per language written for manual review
+  inspect_rejected: 30
+
+split:
+  train_frac: 0.96
+  val_frac: 0.02                     # test gets the remainder (0.02)
+
+tokenizer:
+  vocab_size: 64000                  # including special tokens
+  special_tokens: ["<pad>", "<eos>"] # <eos> also serves as BOS (GPT-2 convention)
+  sample_bytes_per_language: 1.0e8   # ~100MB of UTF-8 text per language
+  min_frequency: 2
+  out_dir: tokenizer                 # under data_root
+
+packing:
+  block_size: 1024
+  train_blocks_per_language: 97656
+  heldout_blocks_per_language: 1024  # validation and test each
+  quick_val_blocks: 100              # first N validation blocks per language
+  encode_batch_docs: 1000
+
+# Inputs for Gate 2 (plan Section 13).
+inspection:
+  heldout_docs_per_language: 2000    # validation documents for round trip / fertility stats
+  flores:
+    dataset: openlanguagedata/flores_plus   # gated: accept terms on the Hub; needs HF_TOKEN
+    split: dev                              # never use devtest here
+    configs: {en: eng_Latn, vi: vie_Latn, id: ind_Latn, ja: jpn_Jpan, zh: cmn_Hans}
+  reference_tokenizer: Qwen/Qwen2.5-0.5B    # comparison only; set to null to skip
+  examples:
+    en: "On 15 November 2026, Dr. Nguyen paid $1,234.56 for 3 tickets in New York."
+    vi: "Ngày 15 tháng 11 năm 2026, bác sĩ Nguyễn Văn An đã mua 3 vé với giá 1.234.000 đồng."
+    id: "Pada 15 November 2026, dr. Siti Rahayu membeli 3 tiket seharga Rp1.234.000 di Jakarta."
+    ja: "2026年11月15日、田中太郎さんは東京駅で切符を3枚買いました。"
+    zh: "2026年11月15日，王小明在北京站买了3张车票。"
+
+gates:
+  data:
+    min_language_purity: 0.95        # manual review result, recorded in the Gate 1 report
+  tokenizer:
+    max_parity_pass: 1.5             # tokens(lang)/tokens(en) on FLORES dev
+    max_parity_fail: 2.0
+    max_partial_byte_fraction: 0.01  # ja/zh tokens that are partial UTF-8 characters
+    max_reference_ratio_vs_median: 1.5
